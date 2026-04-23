@@ -1,1 +1,72 @@
-../../caddy-build.yaml
+name: Generate new caddy version.
+on:
+  push:
+    tags:
+      # Matches v1.0.0, v2.5.11, etc.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  new-caddy-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository.
+        uses: actions/checkout@v4
+
+      - name: Display Version
+        run: |
+          # GITEA_REF_NAME will be the tag name (i.e. v1.0.0)
+          echo "Running new build for Caddy ${{ gitea.ref_name }}"
+
+      - name: Check caddy version to determine dynu verison.
+        id: semver
+        uses: https://github.com/sanderploegsma/semver-compare-action@v1
+        with:
+          version: ${{ github.ref_name }}
+          operator: '>='
+          comparison: '2.10.0'
+
+      - name: Create BIN directory.
+        run: |
+          # Create bin directory for releases.
+          echo "Creating bin directory."
+          mkdir bin
+
+      - name: Build custom Caddy binary with dynu-dns module. Caddy >= v2.10.0
+        uses: https://github.com/azolfagharj/action-caddy-builder@v1.0.0
+        if: steps.semver.outputs.result == 'true'
+        id: caddy-ge-2-10
+        with:
+          caddy-version: "${{ gitea.ref_name }}"
+          modules: |
+            github.com/caddy-dns/dynu@v1.0.0
+
+      - name: Build custom Caddy binary with dynu-dns module. Caddy < v2.10.0
+        uses: https://github.com/azolfagharj/action-caddy-builder@v1.0.0
+        if: steps.semver.outputs.result == 'false'
+        id: caddy-lt-2-10
+        with:
+          caddy-version: "${{ gitea.ref_name }}"
+          modules: |
+            github.com/caddy-dns/dynu@v0.1.1
+
+      - name: Copy Caddy binary to output spot. Caddy >= v2.10.0
+        if: steps.caddy-ge-2-10.conclusion == 'success' && steps.caddy-lt-2-10.conclusion == 'skipped'
+        run: |
+          # Copy binary to output spot.
+          echo "Copying build caddy binary for ${{ gitea.ref_name }} to output path."
+          cp -f "${{ steps.caddy-ge-2-10.outputs.caddy-path }}" bin/caddy
+
+      - name: Copy Caddy binary to output spot. Caddy < v2.10.0
+        if: steps.caddy-ge-2-10.conclusion == 'skipped' && steps.caddy-lt-2-10.conclusion == 'success'
+        run: |
+          # Copy binary to output spot.
+          echo "Copying build caddy binary for ${{ gitea.ref_name }} to output path."
+          cp -f "${{ steps.caddy-lt-2-10.outputs.caddy-path }}" bin/caddy
+
+      - name: Create release for new caddy build.
+        uses: https://gitea.com/actions/gitea-release-action@v1
+        with:
+          body_path: "release_notes/${{ gitea.ref_name }}.md"
+          sha256sum: true
+          files: |-
+            bin/caddy
