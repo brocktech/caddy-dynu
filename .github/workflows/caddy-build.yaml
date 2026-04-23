@@ -8,33 +8,36 @@ on:
 jobs:
   new-caddy-version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Display Version
         run: |
-          # GITEA_REF_NAME will be the tag name (i.e. v1.0.0)
-          echo "Running new build for Caddy ${{ gitea.ref_name }}"
+          # GITHUB_REF_NAME will be the tag name (i.e. v1.0.0)
+          echo "Running new build for Caddy ${{ github.ref_name }}"
 
       - name: Install required packages.
         run: |
-          apt install -y php-cli
+          sudo apt-get update
+          sudo apt-get install -y php-cli
 
       - name: Get clean version tag.
         run: |
           # Get raw value.
-          RAW_TAG=${{ gitea.ref_name }}
+          RAW_TAG=${{ github.ref_name }}
 
           # Remove leading v
           STRIPPED_TAG=${RAW_TAG#v}
 
           # Add to env for later steps.
-          echo "CLEAN_TAG=${STRIPPED_TAG}" >> ${GITEA_ENV}
+          echo "CLEAN_TAG=${STRIPPED_TAG}" >> ${GITHUB_ENV}
 
       - name: Check caddy version to determine dynu verison.
         id: semver
-        uses: https://github.com/mage-os/github-actions/semver-compare@main
+        uses: mage-os/github-actions/semver-compare@main
         with:
           version: ${{ env.CLEAN_TAG }}
           compare_against: '2.10.0'
@@ -46,20 +49,20 @@ jobs:
           mkdir bin
 
       - name: Build custom Caddy binary with dynu-dns module. Caddy >= v2.10.0
-        uses: https://github.com/azolfagharj/action-caddy-builder@v1.0.0
+        uses: azolfagharj/action-caddy-builder@v1.0.0
         if: steps.semver.outputs.result != -1
         id: caddy-ge-2-10
         with:
-          caddy-version: "${{ gitea.ref_name }}"
+          caddy-version: "${{ github.ref_name }}"
           modules: |
             github.com/caddy-dns/dynu@v1.0.0
 
       - name: Build custom Caddy binary with dynu-dns module. Caddy < v2.10.0
-        uses: https://github.com/azolfagharj/action-caddy-builder@v1.0.0
+        uses: azolfagharj/action-caddy-builder@v1.0.0
         if: steps.semver.outputs.result == -1
         id: caddy-lt-2-10
         with:
-          caddy-version: "${{ gitea.ref_name }}"
+          caddy-version: "${{ github.ref_name }}"
           modules: |
             github.com/caddy-dns/dynu@v0.1.1
 
@@ -67,20 +70,25 @@ jobs:
         if: steps.semver.outputs.result != -1
         run: |
           # Copy binary to output spot.
-          echo "Copying build caddy binary for ${{ gitea.ref_name }} to output path."
+          echo "Copying build caddy binary for ${{ github.ref_name }} to output path."
           cp -f "${{ steps.caddy-ge-2-10.outputs.caddy-path }}" bin/caddy
 
       - name: Copy Caddy binary to output spot. Caddy < v2.10.0
         if: steps.semver.outputs.result == -1
         run: |
           # Copy binary to output spot.
-          echo "Copying build caddy binary for ${{ gitea.ref_name }} to output path."
+          echo "Copying build caddy binary for ${{ github.ref_name }} to output path."
           cp -f "${{ steps.caddy-lt-2-10.outputs.caddy-path }}" bin/caddy
 
-      - name: Create release for new caddy build.
-        uses: https://gitea.com/actions/gitea-release-action@v1
+      - name: Generate sha256sum of caddy binary.
+        run: |
+          sha=$(sha256sum bin/caddy | cut -d' ' -f 1 | tee bin/caddy.sha256)
+          echo "Generated sha256 for caddy binary: ${sha}"
+
+      - name: Create a github release.
+        uses: softprops/action-gh-release@v3
         with:
-          body_path: "release_notes/${{ gitea.ref_name }}.md"
-          sha256sum: true
-          files: |-
+          body_path: release_notes/${{ github.ref_name }}.md
+          files: |
             bin/caddy
+            bin/caddy.sha256
