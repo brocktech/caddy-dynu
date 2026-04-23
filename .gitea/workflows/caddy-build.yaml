@@ -19,7 +19,8 @@ jobs:
 
       - name: Install required packages.
         run: |
-          apt install -y php-cli
+          apt-get update
+          apt-get install -y php-cli
 
       - name: Get clean version tag.
         run: |
